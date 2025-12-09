@@ -1,0 +1,96 @@
+# 📝 深度学习入门核心笔记 (基于 AlexNet)
+## 第一部分：核心盲区回顾 (您刚才提问的重点)
+### 1. 数据预处理与加载 (LoadCIFAR10.py)归一化 (Normalization)代码：
+1. transforms.Normalize((0.5...), (0.5...))
+- 原理：使用 Z-score 公式 $\frac{x - mean}{std}$。
+- 作用：将原始 [0, 1] 的像素值强行拉伸映射到 [-1, 1] 之间（零均值分布）。
+- 目的：让数据分布以 0 为中心，加速模型收敛，防止梯度计算跑偏。
+
+2. 数据集加载机制download=True (物理下载)
+- torchvision 库内部硬编码了 URL。它一次性下载包含所有数据（训练集+测试集）的压缩包到硬盘。只需执行一次。
+- train=True/False (逻辑加载)：决定读取硬盘里哪部分数据进入内存。True：加载 50,000 张“课本”（训练集）。False：加载 10,000 张“考卷”（测试集）。
+- 文件路径陷阱：代码中使用了 ../（上一级目录），导致生成的文件跑到了项目文件夹外面。修改为 ./ 可保存在当前目录。
+
+### 2. 模型架构设计 (AlexNet.py)
+1. 卷积层 (nn.Conv2d) 
+- “特征提取器”三要素：kernel_size (视窗大小)：手电筒的光圈，越大看的范围越广。stride (步长)：移动的跨度，步长越大，图片缩小越快（降维）。padding (填充)：在边缘补圈，防止边缘信息丢失。
+- 尺寸计算公式 (必背)：$$Output = \lfloor \frac{Input + 2 \times Padding - KernelSize}{Stride} \rfloor + 1$$
+- 通道数 (Channels)：数据的“厚度”或“特征维度”。变化规律：RGB (3) $\to$ 线条 (64) $\to$ 部件 (192) $\to$ 整体 (256)。 核心原则：图越小（空间信息少），通道越厚（语义信息多）。
+- 池化层 (Pooling) —— “压缩机”最大池化 (MaxPool2d)：保留区域内最强的特征（最大值），减少计算量。通常接在卷积后面。
+- 自适应池化 (AdaptiveAvgPool2d)：兜底神器。不管前面算出来多大，强行压缩成固定尺寸（如 6x6）。通常用在全连接层之前，防止尺寸不匹配报错。
+- 全连接与展平展平 (Flatten)：因为全连接层（分类器）只接受一维向量，所以必须把立体的特征图 $(Channels, H, W)$ 拍扁。
+- 分类器设计：通常是 Dropout $\to$ Linear $\to$ ReLU 的组合。
+- Dropout：随机让部分神经元“下课”（归零），防止模型死记硬背（过拟合）。
+
+### 3. 训练核心机制 (Trainer.py)
+#### 训练五部曲 (循环中的核心动作)：
+1. Forward (前向传播): y_pred = model(x) —— 模型根据当前参数瞎猜。
+2. Loss (计算损失): loss = criterion(y_pred, y) —— 裁判打分，看猜得有多离谱。
+3. Zero Grad (清空梯度): optimizer.zero_grad() —— 清除上一次的修正建议。
+4. Backward (反向传播): loss.backward() —— 关键一步，利用链式法则计算每个参数该怎么改（求梯度）。
+5. Step (更新参数): optimizer.step() —— 优化器根据梯度，实际修改参数值。
+
+
+## 第二部分：遗漏的进阶知识 (建议补充学习)
+### 训练模式与评估模式 (Mode Switching)代码
+1. model.train() vs model.eval()知识点
+- model.train()：告诉模型“现在是学习时间”。启用 Dropout（随机丢弃）和 Batch Normalization。
+- model.eval()：告诉模型“现在是考试时间”。关闭 Dropout（参数固定，火力全开）。后果：
+- 如果在测试/预测时忘了写 model.eval()，会导致预测结果不稳定，准确率下降。
+```python
+for epoch in range(num_epochs):
+    # =========== 阶段 1：训练 (学习时间) ===========
+    model.train()  # <--- 必须在每个 epoch 开始时调用
+    train_loss = 0.0
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
+        
+        optimizer.zero_grad()         # 1. 清空梯度
+        outputs = model(images)       # 2. 前向传播
+        loss = criterion(outputs, labels) # 3. 计算损失
+        loss.backward()               # 4. 反向传播
+        optimizer.step()              # 5. 更新参数
+        train_loss += loss.item()
+
+    # =========== 阶段 2：验证 (考试时间) ===========
+    model.eval()   # <--- 切换模式，关闭 Dropout/BN
+    val_loss = 0.0
+    correct = 0
+    total = 0
+    
+    # 考试时不计算梯度，省内存，加速
+    with torch.no_grad(): 
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            val_loss += loss.item()
+            
+            # 计算准确率
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            
+    print(f"Epoch {epoch+1}, Val Accuracy: {100 * correct / total}%")
+```
+ 2. 梯度控制上下文 (torch.no_grad())代码：通常包裹在测试循环外。
+```python
+torch.no_grad():
+```
+3. 测试代码
+- 作用：告诉 PyTorch “这部分代码不需要反向传播，别浪费内存去记梯度了”。这能显著节省显存并加速推理。
+4. 张量 (Tensor) 的基础素养Shape (形状)：深度学习编程 80% 的 Bug 都是 Shape Mismatch（尺寸对不上）。
+- 调试神技：在 forward 函数里插入 print(x.shape)，时刻监控数据流动的尺寸。
+5. Device (设备管理)：代码中用到的 .cuda()。原则：模型和数据必须在同一个设备上（都在 CPU 或 都在 GPU）。如果一个在左一个在右，会报错。
+```python
+# 自动检测是否有 GPU，没有则使用 CPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# 使用方式：
+model = MyAlexNet().to(device)  # 模型搬家
+# 在训练循环中：
+inputs, labels = inputs.to(device), labels.to(device) # 数据搬家
+```
+6. Type (数据类型)：输入图片通常是 Float32。标签 (Label) 通常是 Long (Int64)。
+7. 超参数 (Hyperparameters) 的直觉Learning Rate (学习率 lr)：这是最重要的参数。太大导致 Loss 震荡（学不进去），太小导致收敛极慢（学得太慢）。
+8. Batch Size：一次喂给模型多少数据。受限于显存大小。Batch Size 越大，训练通常越稳，但也越吃显存。

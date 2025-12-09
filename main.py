@@ -15,7 +15,7 @@ alexnet_config = \
     'num_classes': 10,            # 分类的类别数目
     'device_id': 0,               # 使用的GPU设备的ID号
     'use_cuda': True,             # 是否使用CUDA加速
-    'model_name': '../AlexNet.model' # 保存模型的文件名
+    'model_name': './AlexNet.model' # 保存模型的文件名
 }
 
 if __name__ == "__main__":
